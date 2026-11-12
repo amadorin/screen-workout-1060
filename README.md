@@ -1,8 +1,8 @@
 # training1060
 
-Segundo campo de datos Connect IQ del repo, con otro app id (no pisa a "Zona Potencia 3s"). Pantalla completa para Edge 1050 (y 1060). El nombre dice 1060, pero se compila y prueba para el 1050.
+Segundo campo de datos Connect IQ del repo, con otro app id (no pisa a "Zona Potencia 3s"). Pantalla completa para Edge 1050, 1060 y Edge 850. El nombre dice 1060, pero se compila y prueba para el 1050.
 
-Instalar: copia `releases/training1060-edge1050.prg` a `GARMIN/Apps` del Edge y ponlo en una pantalla de datos de un solo campo.
+Instalar: copia `releases/training1060-edge1050.prg` (o `-edge850.prg` / `-edge1060.prg`) a `GARMIN/Apps` del Edge y ponlo en una pantalla de datos de un solo campo.
 
 ## Qué trae
 - Arriba, pestañas POTENCIA / VELOC / FC: toca una para cambiar el número grande.
@@ -19,3 +19,7 @@ Instalar: copia `releases/training1060-edge1050.prg` a `GARMIN/Apps` del Edge y 
 - La API solo da el paso actual y el siguiente. No hay lista completa ni "paso 8/11": el campo cuenta los pasos y guarda los terminados.
 - No hay datos de comida, bebida, temperatura corporal ni HSI en el API de Connect IQ.
 - Sin probar en el Edge todavía.
+
+## Edge 850
+
+Pantalla táctil de 420x600 (la del 1050 es 480x800). Mismo diseño escalado; como las fuentes miden lo mismo en píxeles, en el 850 se baja un escalón de fuente en todos los textos para que quepan en las casillas más pequeñas. Compila para el 850 (datafield 128 KB, API 6.0); sin probar en el aparato.

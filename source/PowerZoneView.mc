@@ -430,6 +430,21 @@ class PowerZoneView extends WatchUi.DataField {
     private function pw(w) { return (w * mSX).toNumber(); }
     private function ph(h) { return (h * mSY).toNumber(); }
 
+    // Pantallas pequenas (Edge 850, 420x600): mismo tamano de fuente en pixeles que el 1050,
+    // asi que bajamos un escalon para que el texto quepa en las casillas reducidas.
+    private var mCompact = false;
+    private function F(f) {
+        if (!mCompact) { return f; }
+        if (f == Graphics.FONT_NUMBER_THAI_HOT) { return Graphics.FONT_NUMBER_HOT; }
+        if (f == Graphics.FONT_NUMBER_HOT) { return Graphics.FONT_NUMBER_MEDIUM; }
+        if (f == Graphics.FONT_NUMBER_MEDIUM) { return Graphics.FONT_NUMBER_MILD; }
+        if (f == Graphics.FONT_LARGE) { return Graphics.FONT_MEDIUM; }
+        if (f == Graphics.FONT_MEDIUM) { return Graphics.FONT_SMALL; }
+        if (f == Graphics.FONT_SMALL) { return Graphics.FONT_TINY; }
+        if (f == Graphics.FONT_TINY) { return Graphics.FONT_XTINY; }
+        return f;
+    }
+
     private function txt(dc, x, y, font, s, color, just) {
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.drawText(px(x), py(y), font, s, just);
@@ -481,7 +496,7 @@ class PowerZoneView extends WatchUi.DataField {
     private function tile(dc, x0, y0, x1, y1, acc, label) {
         rrect(dc, x0, y0, x1, y1, 12, C_CARD, C_BORD, 2);
         rrect(dc, x0, y0 + 7, x0 + 7, y1 - 7, 3, acc, null, 0);
-        txt(dc, x1 - 12, y0 + 20, Graphics.FONT_XTINY, label, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, x1 - 12, y0 + 20, F(Graphics.FONT_XTINY), label, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     private function iconHeart(dc, cx, cy, col) {
@@ -544,6 +559,7 @@ class PowerZoneView extends WatchUi.DataField {
     }
 
     function onUpdate(dc as Graphics.Dc) as Void {
+        mCompact = dc.getWidth() < 450;
         applyTheme();
         mSX = dc.getWidth() / 480.0f;
         mSY = dc.getHeight() / 800.0f;
@@ -579,10 +595,10 @@ class PowerZoneView extends WatchUi.DataField {
         for (var ti = 0; ti < 3; ti++) {
             if (ti == mHero) {
                 rrect(dc, tabX[ti], 20, tabX[ti] + tabW[ti], 56, 18, C_BLUE, null, 0);
-                txt(dc, tabX[ti] + tabW[ti] / 2, 38, Graphics.FONT_XTINY, tabL[ti], 0x0B0E14, JC);
+                txt(dc, tabX[ti] + tabW[ti] / 2, 38, F(Graphics.FONT_XTINY), tabL[ti], 0x0B0E14, JC);
             } else {
                 rrect(dc, tabX[ti], 20, tabX[ti] + tabW[ti], 56, 18, C_CARD, C_BORD, 2);
-                txt(dc, tabX[ti] + tabW[ti] / 2, 38, Graphics.FONT_XTINY, tabL[ti], C_GREY, JC);
+                txt(dc, tabX[ti] + tabW[ti] / 2, 38, F(Graphics.FONT_XTINY), tabL[ti], C_GREY, JC);
             }
         }
 
@@ -602,19 +618,19 @@ class PowerZoneView extends WatchUi.DataField {
         var bigUnit = "W";
         if (mHero == 1) { bigTxt = (mSpeed != null) ? (mSpeed * 3.6f).format("%.1f") : "--"; bigUnit = "km/h"; }
         else if (mHero == 2) { bigTxt = (mHr != null) ? mHr.toString() : "--"; bigUnit = "ppm"; }
-        txt(dc, 26, 142, Graphics.FONT_NUMBER_THAI_HOT, bigTxt, C_WHITE, JL);
-        var bigW = dc.getTextWidthInPixels(bigTxt, Graphics.FONT_NUMBER_THAI_HOT) / mSX;
-        txt(dc, 26 + bigW + 6, 196, Graphics.FONT_MEDIUM, bigUnit, C_GREY, JL);
+        txt(dc, 26, 142, F(Graphics.FONT_NUMBER_THAI_HOT), bigTxt, C_WHITE, JL);
+        var bigW = dc.getTextWidthInPixels(bigTxt, F(Graphics.FONT_NUMBER_THAI_HOT)) / mSX;
+        txt(dc, 26 + bigW + 6, 196, F(Graphics.FONT_MEDIUM), bigUnit, C_GREY, JL);
 
         // MEDIA LAP grande a la derecha (donde estaba la pastilla)
-        var wW = dc.getTextWidthInPixels("W", Graphics.FONT_SMALL) / mSX;
-        txt(dc, 456, 84, Graphics.FONT_XTINY, "MEDIA LAP", C_GREY, JR);
-        txt(dc, 456 - wW - 6, 126, Graphics.FONT_NUMBER_MEDIUM, avgTxt, avgCol, JR);
-        txt(dc, 456 - wW, 134, Graphics.FONT_SMALL, "W", C_GREY, JL);
-        if (state == 2) { txt(dc, 456, 162, Graphics.FONT_XTINY, "POR DEBAJO", needleColor, JR); }
-        else if (state == 3) { txt(dc, 456, 162, Graphics.FONT_XTINY, "POR ENCIMA", needleColor, JR); }
+        var wW = dc.getTextWidthInPixels("W", F(Graphics.FONT_SMALL)) / mSX;
+        txt(dc, 456, 84, F(Graphics.FONT_XTINY), "MEDIA LAP", C_GREY, JR);
+        txt(dc, 456 - wW - 6, 126, F(Graphics.FONT_NUMBER_MEDIUM), avgTxt, avgCol, JR);
+        txt(dc, 456 - wW, 134, F(Graphics.FONT_SMALL), "W", C_GREY, JL);
+        if (state == 2) { txt(dc, 456, 162, F(Graphics.FONT_XTINY), "POR DEBAJO", needleColor, JR); }
+        else if (state == 3) { txt(dc, 456, 162, F(Graphics.FONT_XTINY), "POR ENCIMA", needleColor, JR); }
         if (hasObj) {
-            txt(dc, 456, 190, Graphics.FONT_XTINY, (mFromWorkout ? "PASO " : "OBJ ") + mObjLow + "-" + mObjHigh + " W", C_OBJT, JR);
+            txt(dc, 456, 190, F(Graphics.FONT_XTINY), (mFromWorkout ? "PASO " : "OBJ ") + mObjLow + "-" + mObjHigh + " W", C_OBJT, JR);
         }
 
         // barra de potencia con zoom dinamico
@@ -633,15 +649,15 @@ class PowerZoneView extends WatchUi.DataField {
 
         // etiquetas de escala: vatios por debajo / por encima del rango objetivo
         if (hasObj) {
-            txt(dc, 30, 354, Graphics.FONT_XTINY, "-" + (mObjLow - mScaleMin) + " W", C_GREY, JL);
-            txt(dc, 450, 354, Graphics.FONT_XTINY, "+" + (mScaleMax - mObjHigh) + " W", C_GREY, JR);
+            txt(dc, 30, 354, F(Graphics.FONT_XTINY), "-" + (mObjLow - mScaleMin) + " W", C_GREY, JL);
+            txt(dc, 450, 354, F(Graphics.FONT_XTINY), "+" + (mScaleMax - mObjHigh) + " W", C_GREY, JR);
         } else {
-            txt(dc, 30, 354, Graphics.FONT_XTINY, mScaleMin.toString(), C_GREY, JL);
-            txt(dc, 450, 354, Graphics.FONT_XTINY, mScaleMax.toString(), C_GREY, JR);
+            txt(dc, 30, 354, F(Graphics.FONT_XTINY), mScaleMin.toString(), C_GREY, JL);
+            txt(dc, 450, 354, F(Graphics.FONT_XTINY), mScaleMax.toString(), C_GREY, JR);
         }
         if (hasObj) {
-            txt(dc, mapX(mObjLow), 354, Graphics.FONT_XTINY, mObjLow.toString(), C_GREEN, JC);
-            txt(dc, mapX(mObjHigh), 354, Graphics.FONT_XTINY, mObjHigh.toString(), C_GREEN, JC);
+            txt(dc, mapX(mObjLow), 354, F(Graphics.FONT_XTINY), mObjLow.toString(), C_GREEN, JC);
+            txt(dc, mapX(mObjHigh), 354, F(Graphics.FONT_XTINY), mObjHigh.toString(), C_GREEN, JC);
         }
 
         drawPager(dc);
@@ -655,21 +671,21 @@ class PowerZoneView extends WatchUi.DataField {
             if (mNextKind == 0) { ttl = "ULTIMO ESFUERZO"; }
             else if (mNextName.length() > 0) { ttl = "SIGUIENTE · " + mNextName.toUpper(); }
             dc.setClip(px(22), py(672), pw(300), ph(40));
-            txt(dc, 24, 690, Graphics.FONT_XTINY, ttl, 0x0B0E14, JL);
+            txt(dc, 24, 690, F(Graphics.FONT_XTINY), ttl, 0x0B0E14, JL);
             dc.clearClip();
-            if (mNextDur > 0) { txt(dc, 456, 690, Graphics.FONT_XTINY, fmtHMS(mNextDur), 0x0B0E14, JR); }
+            if (mNextDur > 0) { txt(dc, 456, 690, F(Graphics.FONT_XTINY), fmtHMS(mNextDur), 0x0B0E14, JR); }
             var wt = "--";
             if (mNextKind == 1) { wt = mNextLow + "-" + mNextHigh; }
             else if (mNextKind == 2) { wt = "LIBRE"; }
             else { wt = "FIN"; }
-            txt(dc, 24, 748, Graphics.FONT_NUMBER_MILD, wt, 0x0B0E14, JL);
+            txt(dc, 24, 748, F(Graphics.FONT_NUMBER_MILD), wt, 0x0B0E14, JL);
             if (mNextKind == 1) {
-                var ww = dc.getTextWidthInPixels(wt, Graphics.FONT_NUMBER_MILD) / mSX;
-                txt(dc, 24 + ww + 6, 756, Graphics.FONT_SMALL, "W", C_GREY, JL);
+                var ww = dc.getTextWidthInPixels(wt, F(Graphics.FONT_NUMBER_MILD)) / mSX;
+                txt(dc, 24 + ww + 6, 756, F(Graphics.FONT_SMALL), "W", C_GREY, JL);
             }
-            txt(dc, 456, 748, Graphics.FONT_NUMBER_MILD, mNextRem.toString(), bc, JR);
-            var rw = dc.getTextWidthInPixels(mNextRem.toString(), Graphics.FONT_NUMBER_MILD) / mSX;
-            txt(dc, 456 - rw - 8, 756, Graphics.FONT_XTINY, "EN", 0x0B0E14, JR);
+            txt(dc, 456, 748, F(Graphics.FONT_NUMBER_MILD), mNextRem.toString(), bc, JR);
+            var rw = dc.getTextWidthInPixels(mNextRem.toString(), F(Graphics.FONT_NUMBER_MILD)) / mSX;
+            txt(dc, 456 - rw - 8, 756, F(Graphics.FONT_XTINY), "EN", 0x0B0E14, JR);
             return;
         }
     }
@@ -679,9 +695,9 @@ class PowerZoneView extends WatchUi.DataField {
         var names = ["RIDE", "PASOS", "ANÁLISIS", "CUERPO"];
         var cols = [C_BLUE, C_ORG, C_PURP, C_HRRED];
         rrect(dc, 8, 396, 472, 438, 10, C_CARD, cols[mPage], 2);
-        txt(dc, 36, 417, Graphics.FONT_SMALL, "<", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        txt(dc, 444, 417, Graphics.FONT_SMALL, ">", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        txt(dc, 240, 410, Graphics.FONT_XTINY, names[mPage], cols[mPage], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, 36, 417, F(Graphics.FONT_SMALL), "<", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, 444, 417, F(Graphics.FONT_SMALL), ">", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, 240, 410, F(Graphics.FONT_XTINY), names[mPage], cols[mPage], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         for (var i = 0; i < 4; i++) {
             dc.setColor(i == mPage ? cols[mPage] : C_BORD, Graphics.COLOR_TRANSPARENT);
             dc.fillCircle(px(216 + i * 16), py(430), pw(4) > 2 ? pw(4) : 2);
@@ -695,9 +711,9 @@ class PowerZoneView extends WatchUi.DataField {
         var y0 = 446 + row * 116;
         var y1 = y0 + 108;
         tile(dc, x0, y0, x1, y1, acc, label);
-        var f = fitFont(dc, value, pw(x1 - x0 - 90), [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD, Graphics.FONT_SMALL]);
+        var f = fitFont(dc, value, pw(x1 - x0 - 90), [F(Graphics.FONT_NUMBER_MEDIUM), F(Graphics.FONT_NUMBER_MILD), F(Graphics.FONT_SMALL)]);
         txt(dc, x0 + 22, y0 + 64, f, value, C_WHITE, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
-        txt(dc, x1 - 12, y1 - 20, Graphics.FONT_XTINY, unit, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, x1 - 12, y1 - 20, F(Graphics.FONT_XTINY), unit, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     private function nn(v, fmt) {
@@ -733,8 +749,8 @@ class PowerZoneView extends WatchUi.DataField {
             var y1 = 584;
             rrect(dc, 8, y0, 472, y1, 12, C_CARD, C_BORD, 2);
             rrect(dc, 8, y0 + 7, 15, y1 - 7, 3, C_BLUE, null, 0);
-            txt(dc, 28, y0 + 14, Graphics.FONT_XTINY, "ÚLTIMOS 40 S", C_GREY, JL);
-            if (hasObj) { txt(dc, 456, y0 + 14, Graphics.FONT_XTINY, "BANDA OBJETIVO", C_GREEN, JR); }
+            txt(dc, 28, y0 + 14, F(Graphics.FONT_XTINY), "ÚLTIMOS 40 S", C_GREY, JL);
+            if (hasObj) { txt(dc, 456, y0 + 14, F(Graphics.FONT_XTINY), "BANDA OBJETIVO", C_GREEN, JR); }
     var cx0 = 28.0f;
     var cx1 = 456.0f;
     var cy0 = y0 + 28.0f;
@@ -804,28 +820,28 @@ class PowerZoneView extends WatchUi.DataField {
         var y0 = 592 + row * 100;
         var y1 = y0 + 92;
         tile(dc, x0, y0, x1, y1, acc, label);
-        txt(dc, x0 + 22, y0 + 56, Graphics.FONT_NUMBER_MILD, value, C_WHITE, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
-        txt(dc, x1 - 12, y1 - 18, Graphics.FONT_XTINY, unit, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, x0 + 22, y0 + 56, F(Graphics.FONT_NUMBER_MILD), value, C_WHITE, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, x1 - 12, y1 - 18, F(Graphics.FONT_XTINY), unit, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // Panel de pasos: actual, siguiente y los ultimos terminados.
     // El API solo da el paso actual y el siguiente; los anteriores los guarda el campo.
     private function drawSteps(dc, JL, JR) {
         rrect(dc, 8, 446, 472, 536, 12, C_CARD, C_ORG, 3);
-        txt(dc, 24, 466, Graphics.FONT_XTINY, "PASO " + mStepNo + (mStepName.length() > 0 ? " · " + mStepName.toUpper() : ""), C_GREY, JL);
-        txt(dc, 24, 508, Graphics.FONT_NUMBER_MILD, stepClock(), C_WHITE, JL);
-        txt(dc, 456, 508, Graphics.FONT_NUMBER_MILD, hasObjective() ? (mObjLow + "-" + mObjHigh) : "LIBRE", C_OBJT, JR);
+        txt(dc, 24, 466, F(Graphics.FONT_XTINY), "PASO " + mStepNo + (mStepName.length() > 0 ? " · " + mStepName.toUpper() : ""), C_GREY, JL);
+        txt(dc, 24, 508, F(Graphics.FONT_NUMBER_MILD), stepClock(), C_WHITE, JL);
+        txt(dc, 456, 508, F(Graphics.FONT_NUMBER_MILD), hasObjective() ? (mObjLow + "-" + mObjHigh) : "LIBRE", C_OBJT, JR);
 
         rrect(dc, 8, 544, 472, 612, 12, C_CARD, C_BORD, 2);
         var nm = "SIGUIENTE";
         if (mNextKind == 0) { nm = mFromWorkout ? "ÚLTIMO PASO" : "SIN ENTRENAMIENTO"; }
-        txt(dc, 24, 578, Graphics.FONT_XTINY, nm, C_GREY, JL);
+        txt(dc, 24, 578, F(Graphics.FONT_XTINY), nm, C_GREY, JL);
         if (mNextKind != 0) {
-            if (mNextDur > 0) { txt(dc, 200, 578, Graphics.FONT_SMALL, fmtHMS(mNextDur), C_WHITE, JL); }
-            txt(dc, 456, 578, Graphics.FONT_SMALL, (mNextKind == 1) ? (mNextLow + "-" + mNextHigh + " W") : "LIBRE", C_WHITE, JR);
+            if (mNextDur > 0) { txt(dc, 200, 578, F(Graphics.FONT_SMALL), fmtHMS(mNextDur), C_WHITE, JL); }
+            txt(dc, 456, 578, F(Graphics.FONT_SMALL), (mNextKind == 1) ? (mNextLow + "-" + mNextHigh + " W") : "LIBRE", C_WHITE, JR);
         }
 
-        txt(dc, 24, 634, Graphics.FONT_XTINY, "TERMINADOS", C_GREY, JL);
+        txt(dc, 24, 634, F(Graphics.FONT_XTINY), "TERMINADOS", C_GREY, JL);
         var shown = (mHN < 3) ? mHN : 3;
         for (var k = 0; k < shown; k++) {
             var idx = (mHIdx - 1 - k + 12) % 6;
@@ -836,10 +852,10 @@ class PowerZoneView extends WatchUi.DataField {
             if (ok) { col = (avg >= mHLow[idx] && avg <= mHHigh[idx]) ? C_GREEN : C_RED; }
             rrect(dc, 8, y0, 472, y0 + 42, 8, C_CARD, null, 0);
             rrect(dc, 8, y0 + 4, 15, y0 + 38, 3, col, null, 0);
-            txt(dc, 28, y0 + 21, Graphics.FONT_XTINY, fmtHMS(mHDur[idx]), C_WHITE, JL);
-            txt(dc, 160, y0 + 21, Graphics.FONT_XTINY, ok ? (mHLow[idx] + "-" + mHHigh[idx] + " W") : "LIBRE", C_GREY, JL);
-            txt(dc, 456, y0 + 21, Graphics.FONT_XTINY, avg + " W", col, JR);
+            txt(dc, 28, y0 + 21, F(Graphics.FONT_XTINY), fmtHMS(mHDur[idx]), C_WHITE, JL);
+            txt(dc, 160, y0 + 21, F(Graphics.FONT_XTINY), ok ? (mHLow[idx] + "-" + mHHigh[idx] + " W") : "LIBRE", C_GREY, JL);
+            txt(dc, 456, y0 + 21, F(Graphics.FONT_XTINY), avg + " W", col, JR);
         }
-        if (mHN == 0) { txt(dc, 240, 720, Graphics.FONT_XTINY, "Aún no has terminado ningún paso", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER); }
+        if (mHN == 0) { txt(dc, 240, 720, F(Graphics.FONT_XTINY), "Aún no has terminado ningún paso", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER); }
     }
 }
