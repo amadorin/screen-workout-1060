@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+    <iq:application entry="PowerZoneApp" id="7c3e1b52-94d8-4a6f-b0e2-5d1f8a3c6e17" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.4.0" name="@Strings.AppName" type="datafield" version="1.0.0">
+        <iq:products>
+            <iq:product id="edge1050"/>
+            <iq:product id="edge1060"/>
+        </iq:products>
+        <iq:permissions/>
+        <iq:languages>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+        <iq:barrels/>
+    </iq:application>
+</iq:manifest>
+

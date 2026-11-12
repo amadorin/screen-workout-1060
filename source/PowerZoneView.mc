@@ -1,0 +1,845 @@
+import Toybox.Activity;
+import Toybox.Application;
+import Toybox.Graphics;
+import Toybox.Lang;
+import Toybox.Math;
+import Toybox.WatchUi;
+
+// Campo de datos para Edge 1050 y 1060 (480x800): potencia 3 s con zona objetivo.
+// El objetivo se lee del paso de entrenamiento activo del Edge
+// (Activity.getCurrentWorkoutStep, API 3.2.0, disponible en Edge 1050).
+// Sin entrenamiento o sin objetivo de potencia en el paso: SIN OBJETIVO.
+
+class PowerZoneView extends WatchUi.DataField {
+
+    // Ajustes (propiedades)
+    private var mFtp = 430;
+    private var mObjLow = 215;
+    private var mObjHigh = 258;
+    private var mFromWorkout = false;
+    private var mStepName = "";
+    private var mStepDurType = -1;
+    private var mStepDurVal = 0;
+    private var mStepSig = "";
+    private var mStepStartSec = 0;
+    // siguiente paso (aviso de los ultimos 5 s)
+    private var mNextKind = 0; // 0 = no hay siguiente, 1 = potencia, 2 = sin potencia
+    private var mNextLow = 0;
+    private var mNextHigh = 0;
+    private var mBanner = "";
+    private var mBannerKind = 0; // 1 aprieta, 2 afloja, 3 igual/ultimo
+    private var mBannerFrame = 0;
+    private var mNextName = "";
+    private var mNextDur = 0;
+    private var mNextRem = 0;
+    private var mHero = 0; // 0 potencia, 1 velocidad, 2 FC
+    // media del paso (para el aviso de fin de paso)
+    private var mStepSum = 0.0f;
+    private var mStepN = 0;
+    private var mAccLow = 0;
+    private var mAccHigh = 0;
+    private var mPendingAlert = null;
+    private var mLastGood = 0;
+    private var mLastNeutral = 0;
+
+    // Datos en vivo
+    private var mHasPower = false;
+    private var mPower3 = 0.0f;
+    private var mAvgPower = null;
+    private var mLapSum = 0.0f;
+    private var mLapN = 0;
+    private var mHr = null;
+    private var mCad = null;
+    private var mSpeed = null;
+    private var mDist = null;
+    private var mAsc = null;
+    private var mPage = 0;
+    private var mAvgHr = null;
+    private var mMaxHr = null;
+    private var mCal = null;
+    private var mMaxPow = null;
+    private var mStepNo = 1;
+    private var mHN = 0;
+    private var mHIdx = 0;
+    private var mHAvg = new [6];
+    private var mHLow = new [6];
+    private var mHHigh = new [6];
+    private var mHDur = new [6];
+    private var mTimerSec = 0;
+
+    // Buffer 3 s
+    private var mBuf3 = [0.0f, 0.0f, 0.0f];
+    private var mBuf3Idx = 0;
+    private var mBuf3N = 0;
+
+    // NP (media movil 30 s)
+    private var mBuf30 = new [30];
+    private var mBuf30Idx = 0;
+    private var mBuf30N = 0;
+    private var mNpSum4 = 0.0d;
+    private var mNpN = 0;
+    private var mNp = 0.0f;
+    private var mTss = 0.0f;
+
+    // Grafico ultimos 40 s (potencia 3 s)
+    private var mChart = new [40];
+    private var mChartIdx = 0;
+    private var mChartN = 0;
+
+    // Escala dinamica
+    private var mScaleMin = 0;
+    private var mScaleMax = 400;
+
+    // Escala de pantalla (diseno 480x800)
+    private var mSX = 1.0f;
+    private var mSY = 1.0f;
+
+    // Colores
+    private var C_OBJT  = 0xFFE1C8;
+    private var C_BG     = 0x0B0E14;
+    private var C_PANEL  = 0x12161F;
+    private var C_TRACK  = 0x1B2230;
+    private var C_LINE   = 0x2A3140;
+    private var C_GREY   = 0x8A93A5;
+    private var C_WHITE  = 0xFFFFFF;
+    private var C_RED    = 0xFF3B30;
+    private var C_GREEN  = 0x2BD97C;
+    private var C_ZONEF  = 0x14532D;
+    private var C_AMBER  = 0xFFB020;
+
+    private var C_BLUE   = 0x3D82F6;
+    private var C_PURP   = 0xB062F6;
+    private var C_ORG    = 0xFF781E;
+    private var C_CARD   = 0x151A24;
+    private var C_BORD   = 0x2D3544;
+    private var C_HEROBG = 0x1E100A;
+    private var C_HRRED  = 0xEB4034;
+
+    private const ZONE_FRAC = 0.45f; // la zona ocupa ~45% de la barra
+
+    function initialize() {
+        DataField.initialize();
+        for (var i = 0; i < 30; i++) { mBuf30[i] = 0.0f; }
+        for (var i = 0; i < 40; i++) { mChart[i] = 0.0f; }
+    }
+
+    private function loadSettings() as Void {
+        mFtp = PzSettings.get("ftp", 430);
+        if (mFtp <= 0) { mFtp = 430; }
+        mObjLow = 0; // el objetivo sale solo del paso del entrenamiento
+        mObjHigh = 0;
+        mFromWorkout = false;
+        mStepName = "";
+        mStepDurType = -1;
+        readWorkoutStep();
+        readNextStep();
+    }
+
+    // Objetivo de potencia del paso activo. Valores FIT: >1000 = vatios + 1000,
+    // 0..1000 = % del FTP. Sin entrenamiento cargado: se queda el manual.
+    // >1000: vatios+1000 (FIT). 150..1000: vatios directos (el Edge mostro
+    // "387-408 W" para un paso "Personalizado"). <150: % del FTP.
+    private function toWatts(v as Number) as Number {
+        if (v > 1000) { return v - 1000; }
+        if (v >= 150) { return v; }
+        return (mFtp * v / 100.0 + 0.5).toNumber();
+    }
+
+    // Siguiente paso: Activity.getNextWorkoutStep() (API 3.2.0). null = ultimo paso.
+    private function readNextStep() as Void {
+        mNextKind = 0;
+        mNextLow = 0;
+        mNextHigh = 0;
+        mNextName = "";
+        mNextDur = 0;
+        if (!mFromWorkout) { return; }
+        try {
+            if (!(Activity has :getNextWorkoutStep)) { return; }
+            var nx = Activity.getNextWorkoutStep();
+            if (nx == null) { return; }
+            if (nx.name != null) { mNextName = nx.name; }
+            var st = nx.step;
+            if (st has :activeStep) {
+                var rest = (nx.intensity == Activity.WORKOUT_INTENSITY_REST)
+                    || (nx.intensity == Activity.WORKOUT_INTENSITY_RECOVERY);
+                st = rest ? st.restStep : st.activeStep;
+            }
+            mNextKind = 2;
+            if (st.durationType == Activity.WORKOUT_STEP_DURATION_TIME && st.durationValue != null) {
+                var dv = st.durationValue;
+                if (dv >= 10000) { dv = dv / 1000; }
+                mNextDur = dv;
+            }
+            var tt = st.targetType;
+            var isPower = (tt == Activity.WORKOUT_STEP_TARGET_POWER)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_3S)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_10S)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_30S)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_LAP);
+            if (isPower && st.targetValueLow != null && st.targetValueHigh != null) {
+                mNextKind = 1;
+                mNextLow = toWatts(st.targetValueLow);
+                mNextHigh = toWatts(st.targetValueHigh);
+            }
+        } catch (e) {
+            mNextKind = 0;
+        }
+    }
+
+    // Texto del aviso: solo en los ultimos 5 s de un paso por tiempo con objetivo de potencia.
+    private function updateBanner() as Void {
+        mBanner = "";
+        if (!mFromWorkout || !hasObjective() || mStepDurType != Activity.WORKOUT_STEP_DURATION_TIME || mStepDurVal <= 0) { return; }
+        var total = mStepDurVal;
+        if (total >= 10000) { total = total / 1000; }
+        var rem = total - (mTimerSec - mStepStartSec);
+        if (rem > 8 || rem < 1 || total < 12) { return; }
+        mNextRem = rem;
+        mBanner = "x";
+        var cur = (mObjLow + mObjHigh) / 2;
+        if (mNextKind == 0) {
+            mBannerKind = 3;
+        } else if (mNextKind == 2) {
+            mBannerKind = 2;
+        } else {
+            var nxt = (mNextLow + mNextHigh) / 2;
+            mBannerKind = (nxt * 100 > cur * 105) ? 1 : ((nxt * 100 < cur * 95) ? 2 : 3);
+        }
+    }
+
+    private function readWorkoutStep() as Void {
+        try {
+            if (!(Activity has :getCurrentWorkoutStep)) { return; }
+            var ws = Activity.getCurrentWorkoutStep();
+            if (ws == null) { return; }
+            mFromWorkout = true;
+            if (ws.name != null) { mStepName = ws.name; }
+            var st = ws.step;
+            if (st has :activeStep) {
+                // paso de repeticion: activo o descanso segun la intensidad
+                var rest = (ws.intensity == Activity.WORKOUT_INTENSITY_REST)
+                    || (ws.intensity == Activity.WORKOUT_INTENSITY_RECOVERY);
+                st = rest ? st.restStep : st.activeStep;
+            }
+            mStepDurType = st.durationType;
+            mStepDurVal = (st.durationValue != null) ? st.durationValue : 0;
+            var tt = st.targetType;
+            var isPower = (tt == Activity.WORKOUT_STEP_TARGET_POWER)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_3S)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_10S)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_30S)
+                || (tt == Activity.WORKOUT_STEP_TARGET_POWER_LAP);
+            var lo = st.targetValueLow;
+            var hi = st.targetValueHigh;
+            if (!isPower || lo == null || hi == null) {
+                mObjLow = 0; mObjHigh = 0; // paso sin objetivo de potencia
+                return;
+            }
+            lo = toWatts(lo);
+            hi = toWatts(hi);
+            mObjLow = lo;
+            mObjHigh = hi;
+        } catch (e) {
+            mFromWorkout = false; mObjLow = 0; mObjHigh = 0; // API no permitida: sin objetivo
+        }
+    }
+
+    // La media del lap se acumula aqui (Activity.Info no trae potencia media de lap).
+    function setHero(i as Number) as Void {
+        mHero = i;
+        WatchUi.requestUpdate();
+    }
+
+    function turnPage(d as Number) as Void {
+        mPage = (mPage + d + 4) % 4;
+        WatchUi.requestUpdate();
+    }
+
+    function onTimerLap() as Void { endStep(); resetStepAcc(); mLapSum = 0.0f; mLapN = 0; mStepStartSec = mTimerSec; }
+    function onWorkoutStepComplete() as Void { endStep(); resetStepAcc(); mLapSum = 0.0f; mLapN = 0; mStepStartSec = mTimerSec; }
+    function onTimerReset() as Void { mLapSum = 0.0f; mLapN = 0; mStepStartSec = 0; }
+
+    private function resetStepAcc() as Void {
+        mStepSum = 0.0f;
+        mStepN = 0;
+        mAccLow = mObjLow;
+        mAccHigh = mObjHigh;
+    }
+
+    // Fin de paso: solo con objetivo de potencia y al menos 10 s de datos
+    // (los descansos sin objetivo de potencia no avisan).
+    private function endStep() as Void {
+        if (!mFromWorkout || mStepN < 3) { return; }
+        mHAvg[mHIdx] = (mStepSum / mStepN + 0.5f).toNumber();
+        mHLow[mHIdx] = mAccLow;
+        mHHigh[mHIdx] = mAccHigh;
+        mHDur[mHIdx] = mTimerSec - mStepStartSec;
+        mHIdx = (mHIdx + 1) % 6;
+        if (mHN < 6) { mHN++; }
+        mStepNo++;
+        if (mAccLow <= 0 || mAccHigh <= mAccLow || mStepN < 10) { return; }
+        var avg = (mStepSum / mStepN + 0.5f).toNumber();
+        var good = (avg >= mAccLow) && (avg <= mAccHigh);
+        var head = avg + " W";
+        var text;
+        if (good) {
+            mLastGood = PzPhrases.pick(PzPhrases.GOOD, mLastGood);
+            text = PzPhrases.GOOD[mLastGood];
+        } else {
+            mLastNeutral = PzPhrases.pick(PzPhrases.NEUTRAL, mLastNeutral);
+            text = PzPhrases.NEUTRAL[mLastNeutral];
+        }
+        mPendingAlert = new PzAlert(head, text, good);
+    }
+
+    private function hasObjective() as Boolean {
+        return (mObjLow > 0) && (mObjHigh > mObjLow);
+    }
+
+    function compute(info as Activity.Info) as Void {
+        loadSettings();
+        mHr = info.currentHeartRate;
+        mCad = info.currentCadence;
+        mSpeed = info.currentSpeed;
+        mDist = info.elapsedDistance;
+        mAsc = info.totalAscent;
+        mAvgHr = info.averageHeartRate;
+        mMaxHr = info.maxHeartRate;
+        mCal = info.calories;
+        mMaxPow = info.maxPower;
+        mAvgPower = info.averagePower;
+        mTimerSec = (info.timerTime != null) ? info.timerTime / 1000 : 0;
+        mHasPower = (info.currentPower != null) || (info.averagePower != null);
+
+        // inicio del paso: cambia la firma del paso o salta un evento de lap/paso
+        var sig = mStepName + "|" + mStepDurType + "|" + mStepDurVal + "|" + mObjLow + "|" + mObjHigh;
+        if (!sig.equals(mStepSig)) {
+            endStep();
+            mStepSig = sig;
+            mStepStartSec = mTimerSec;
+            resetStepAcc();
+        }
+        if (mPendingAlert != null) {
+            var al = mPendingAlert;
+            mPendingAlert = null;
+            try { showAlert(al); } catch (e) {}
+        }
+        updateBanner();
+
+        if (info.timerState != Activity.TIMER_STATE_ON) {
+            return; // pausado: no acumular muestras
+        }
+
+        var pv = (info.currentPower != null) ? info.currentPower.toFloat() : 0.0f;
+        mStepSum += pv;
+        mStepN++;
+        mLapSum += pv;
+        mLapN++;
+
+        // media 3 s
+        mBuf3[mBuf3Idx] = pv;
+        mBuf3Idx = (mBuf3Idx + 1) % 3;
+        if (mBuf3N < 3) { mBuf3N++; }
+        mPower3 = mean(mBuf3, mBuf3N);
+
+        // grafico 40 s (3 s suavizada)
+        mChart[mChartIdx] = mPower3;
+        mChartIdx = (mChartIdx + 1) % 40;
+        if (mChartN < 40) { mChartN++; }
+
+        // NP: media movil 30 s -> suma de la 4a potencia
+        mBuf30[mBuf30Idx] = pv;
+        mBuf30Idx = (mBuf30Idx + 1) % 30;
+        if (mBuf30N < 30) { mBuf30N++; }
+        var ra = mean(mBuf30, mBuf30N);
+        var ra2 = ra.toDouble() * ra.toDouble();
+        mNpSum4 += ra2 * ra2;
+        mNpN++;
+        mNp = Math.pow(mNpSum4 / mNpN, 0.25).toFloat();
+
+        if (mFtp > 0 && mTimerSec > 0 && mNp > 0.0f) {
+            var iff = mNp / mFtp;
+            mTss = (mTimerSec.toFloat() * mNp * iff) / (mFtp * 3600.0f) * 100.0f;
+        }
+
+        updateScale();
+    }
+
+    private function mean(buf, n) as Float {
+        if (n <= 0) { return 0.0f; }
+        var s = 0.0f;
+        for (var i = 0; i < n; i++) {
+            var v = buf[i];
+            if (v != null) { s += v; }
+        }
+        return s / n;
+    }
+
+    private function floorTo(n, step) {
+        return n - (n % step);
+    }
+
+    private function ceilTo(n, step) {
+        var r = n % step;
+        return (r == 0) ? n : n + step - r;
+    }
+
+    private function chartMax() as Float {
+        var mx = 0.0f;
+        for (var i = 0; i < mChartN; i++) {
+            var v = mChart[i];
+            if (v != null && v > mx) { mx = v; }
+        }
+        return mx;
+    }
+
+    private function updateScale() as Void {
+        var lo;
+        var hi;
+        if (hasObjective()) {
+            // zona siempre centrada: mismo margen (W) por debajo y por encima
+            var zoneW = (mObjHigh - mObjLow).toFloat();
+            var mg = ceilTo((zoneW * (1.0f - ZONE_FRAC) / (2.0f * ZONE_FRAC)).toNumber(), 5);
+            if (mg < 10) { mg = 10; }
+            if (mg > mObjLow) { mg = mObjLow; }
+            lo = mObjLow - mg;
+            hi = mObjHigh + mg;
+            mScaleMin = lo;
+            mScaleMax = hi;
+            return;
+        } else {
+            lo = 0;
+            hi = 400;
+        }
+        var ref = mPower3;
+        var cm = chartMax();
+        if (cm > ref) { ref = cm; }
+        if (ref.toNumber() > hi) { hi = ceilTo(ref.toNumber(), 5); }
+        var p = mPower3.toNumber();
+        if (p < lo) { lo = floorTo(p, 5); }
+        if (lo < 0) { lo = 0; }
+        if (hi <= lo) { hi = lo + 50; }
+        mScaleMin = lo;
+        mScaleMax = hi;
+    }
+
+    // ---- helpers de dibujo (coordenadas de diseno 480x800) ----
+
+    private function px(x) { return (x * mSX).toNumber(); }
+    private function py(y) { return (y * mSY).toNumber(); }
+    private function pw(w) { return (w * mSX).toNumber(); }
+    private function ph(h) { return (h * mSY).toNumber(); }
+
+    private function txt(dc, x, y, font, s, color, just) {
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(px(x), py(y), font, s, just);
+    }
+
+    private function mapX(p) as Float {
+        // potencia -> x dentro de la barra [30, 450] (diseno)
+        var span = mScaleMax - mScaleMin;
+        if (span <= 0) { span = 1; }
+        var f = (p - mScaleMin).toFloat() / span;
+        if (f < 0.0f) { f = 0.0f; }
+        if (f > 1.0f) { f = 1.0f; }
+        return 30.0f + f * 420.0f;
+    }
+
+    private function fmtHMS(sec) as String {
+        var h = sec / 3600;
+        var m = (sec % 3600) / 60;
+        var s = sec % 60;
+        if (h > 0) {
+            return Lang.format("$1$:$2$:$3$", [h, m.format("%02d"), s.format("%02d")]);
+        }
+        return Lang.format("$1$:$2$", [m, s.format("%02d")]);
+    }
+
+
+    // ---- primitivas de la version tiles ----
+
+    private function fitFont(dc, s, availW, fonts) {
+        for (var i = 0; i < fonts.size(); i++) {
+            if (dc.getTextWidthInPixels(s, fonts[i]) <= availW) { return fonts[i]; }
+        }
+        return fonts[fonts.size() - 1];
+    }
+
+    private function rrect(dc, x0, y0, x1, y1, r, fill, line, lw) {
+        if (fill != null) {
+            dc.setColor(fill, C_BG);
+            dc.fillRoundedRectangle(px(x0), py(y0), pw(x1 - x0), ph(y1 - y0), ph(r));
+        }
+        if (line != null) {
+            dc.setColor(line, C_BG);
+            dc.setPenWidth(pw(lw) > 1 ? pw(lw) : 1);
+            dc.drawRoundedRectangle(px(x0), py(y0), pw(x1 - x0), ph(y1 - y0), ph(r));
+            dc.setPenWidth(1);
+        }
+    }
+
+    private function tile(dc, x0, y0, x1, y1, acc, label) {
+        rrect(dc, x0, y0, x1, y1, 12, C_CARD, C_BORD, 2);
+        rrect(dc, x0, y0 + 7, x0 + 7, y1 - 7, 3, acc, null, 0);
+        txt(dc, x1 - 12, y0 + 20, Graphics.FONT_XTINY, label, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    private function iconHeart(dc, cx, cy, col) {
+        dc.setColor(col, C_BG);
+        dc.fillCircle(px(cx - 9), py(cy - 6), pw(10));
+        dc.fillCircle(px(cx + 9), py(cy - 6), pw(10));
+        dc.fillPolygon([[px(cx - 19), py(cy - 3)], [px(cx + 19), py(cy - 3)], [px(cx), py(cy + 22)]]);
+    }
+
+    private function iconTimer(dc, cx, cy, col) {
+        dc.setColor(col, C_BG);
+        dc.setPenWidth(pw(4) > 2 ? pw(4) : 2);
+        dc.drawCircle(px(cx), py(cy), pw(18));
+        dc.drawLine(px(cx), py(cy), px(cx), py(cy - 11));
+        dc.drawLine(px(cx), py(cy), px(cx + 8), py(cy + 4));
+        dc.setPenWidth(1);
+        dc.fillRectangle(px(cx - 6), py(cy - 30), pw(12), ph(6));
+    }
+
+    private function iconBolt(dc, x, y, col) {
+        dc.setColor(col, C_BG);
+        dc.fillPolygon([[px(x + 14), py(y)], [px(x + 2), py(y + 20)], [px(x + 9), py(y + 20)],
+                        [px(x + 4), py(y + 38)], [px(x + 20), py(y + 14)], [px(x + 12), py(y + 14)]]);
+    }
+
+    private function iconGauge(dc, cx, cy, col) {
+        dc.setColor(col, C_BG);
+        dc.setPenWidth(pw(4) > 2 ? pw(4) : 2);
+        dc.drawArc(px(cx), py(cy), pw(16), Graphics.ARC_COUNTER_CLOCKWISE, 0, 180);
+        dc.drawLine(px(cx), py(cy), px(cx + 10), py(cy - 9));
+        dc.setPenWidth(1);
+    }
+
+    private function iconCrank(dc, cx, cy, col) {
+        dc.setColor(col, C_BG);
+        dc.setPenWidth(pw(4) > 2 ? pw(4) : 2);
+        dc.drawCircle(px(cx), py(cy), pw(13));
+        dc.drawLine(px(cx), py(cy), px(cx + 12), py(cy + 16));
+        dc.setPenWidth(1);
+        dc.fillCircle(px(cx + 13), py(cy + 17), pw(5));
+    }
+
+    // Tema claro/oscuro segun el fondo que el Edge da al campo de datos
+    // (DataField.getBackgroundColor(): blanco = modo claro, negro = modo oscuro).
+    private function applyTheme() as Void {
+        var light = (getBackgroundColor() != Graphics.COLOR_BLACK);
+        if (light) {
+            C_BG = 0xFFFFFF; C_PANEL = 0xF2F4F8; C_TRACK = 0xDDE2EA; C_LINE = 0xC5CCD8;
+            C_GREY = 0x566074; C_WHITE = 0x0B0E14; C_RED = 0xD92D20; C_GREEN = 0x12994F;
+            C_ZONEF = 0xBFEBD2; C_AMBER = 0xE08A00; C_BLUE = 0x2563EB; C_PURP = 0x8E3FD6;
+            C_ORG = 0xE05A00; C_CARD = 0xF4F6FA; C_BORD = 0xC5CCD8; C_HEROBG = 0xFFF1E6;
+            C_HRRED = 0xD93025; C_OBJT = 0xB34700;
+        } else {
+            C_BG = 0x0B0E14; C_PANEL = 0x12161F; C_TRACK = 0x1B2230; C_LINE = 0x2A3140;
+            C_GREY = 0x8A93A5; C_WHITE = 0xFFFFFF; C_RED = 0xFF3B30; C_GREEN = 0x2BD97C;
+            C_ZONEF = 0x14532D; C_AMBER = 0xFFB020; C_BLUE = 0x3D82F6; C_PURP = 0xB062F6;
+            C_ORG = 0xFF781E; C_CARD = 0x151A24; C_BORD = 0x2D3544; C_HEROBG = 0x1E100A;
+            C_HRRED = 0xEB4034; C_OBJT = 0xFFE1C8;
+        }
+    }
+
+    function onUpdate(dc as Graphics.Dc) as Void {
+        applyTheme();
+        mSX = dc.getWidth() / 480.0f;
+        mSY = dc.getHeight() / 800.0f;
+
+        dc.setColor(C_BG, C_BG);
+        dc.clear();
+
+        var hasObj = hasObjective();
+        var p3 = mPower3.toNumber();
+
+        // estado de zona (aguja + pastilla), siempre con la media de 3 s
+        var state = 0; // 0 sin objetivo, 1 en zona, 2 debajo, 3 encima
+        var diff = 0;
+        if (hasObj && mHasPower) {
+            if (p3 < mObjLow) { state = 2; diff = mObjLow - p3; }
+            else if (p3 > mObjHigh) { state = 3; diff = p3 - mObjHigh; }
+            else { state = 1; }
+        }
+        // semaforo: verde en rango, ambar hasta 10 W fuera, rojo mas de 10 W fuera
+        var needleColor = C_WHITE;
+        if (state == 1) { needleColor = C_GREEN; }
+        else if (state >= 2) { needleColor = (diff <= 10) ? C_AMBER : C_RED; }
+
+        var JC = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
+        var JL = Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER;
+        var JR = Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER;
+
+        // ---------- tarjeta principal (hero) ----------
+        rrect(dc, 8, 8, 472, 388, 14, C_HEROBG, C_ORG, 3);
+        var tabX = [22, 160, 280];
+        var tabW = [132, 112, 70];
+        var tabL = ["POTENCIA", "VELOC", "FC"];
+        for (var ti = 0; ti < 3; ti++) {
+            if (ti == mHero) {
+                rrect(dc, tabX[ti], 20, tabX[ti] + tabW[ti], 56, 18, C_BLUE, null, 0);
+                txt(dc, tabX[ti] + tabW[ti] / 2, 38, Graphics.FONT_XTINY, tabL[ti], 0x0B0E14, JC);
+            } else {
+                rrect(dc, tabX[ti], 20, tabX[ti] + tabW[ti], 56, 18, C_CARD, C_BORD, 2);
+                txt(dc, tabX[ti] + tabW[ti] / 2, 38, Graphics.FONT_XTINY, tabL[ti], C_GREY, JC);
+            }
+        }
+
+        // MEDIA LAP arriba a la derecha (verde en rango, ambar <=10 W fuera, rojo mas)
+        var lapAvg = (mLapN > 0) ? (mLapSum / mLapN + 0.5f).toNumber() : -1;
+        var avgTxt = (lapAvg >= 0) ? lapAvg.toString() : "--";
+        var avgCol = C_WHITE;
+        if (lapAvg >= 0 && hasObj) {
+            var d = 0;
+            if (lapAvg < mObjLow) { d = mObjLow - lapAvg; }
+            else if (lapAvg > mObjHigh) { d = lapAvg - mObjHigh; }
+            avgCol = (d == 0) ? C_GREEN : ((d <= 10) ? C_AMBER : C_RED);
+        }
+
+        // potencia 3 s grande
+        var bigTxt = p3.toString();
+        var bigUnit = "W";
+        if (mHero == 1) { bigTxt = (mSpeed != null) ? (mSpeed * 3.6f).format("%.1f") : "--"; bigUnit = "km/h"; }
+        else if (mHero == 2) { bigTxt = (mHr != null) ? mHr.toString() : "--"; bigUnit = "ppm"; }
+        txt(dc, 26, 142, Graphics.FONT_NUMBER_THAI_HOT, bigTxt, C_WHITE, JL);
+        var bigW = dc.getTextWidthInPixels(bigTxt, Graphics.FONT_NUMBER_THAI_HOT) / mSX;
+        txt(dc, 26 + bigW + 6, 196, Graphics.FONT_MEDIUM, bigUnit, C_GREY, JL);
+
+        // MEDIA LAP grande a la derecha (donde estaba la pastilla)
+        var wW = dc.getTextWidthInPixels("W", Graphics.FONT_SMALL) / mSX;
+        txt(dc, 456, 84, Graphics.FONT_XTINY, "MEDIA LAP", C_GREY, JR);
+        txt(dc, 456 - wW - 6, 126, Graphics.FONT_NUMBER_MEDIUM, avgTxt, avgCol, JR);
+        txt(dc, 456 - wW, 134, Graphics.FONT_SMALL, "W", C_GREY, JL);
+        if (state == 2) { txt(dc, 456, 162, Graphics.FONT_XTINY, "POR DEBAJO", needleColor, JR); }
+        else if (state == 3) { txt(dc, 456, 162, Graphics.FONT_XTINY, "POR ENCIMA", needleColor, JR); }
+        if (hasObj) {
+            txt(dc, 456, 190, Graphics.FONT_XTINY, (mFromWorkout ? "PASO " : "OBJ ") + mObjLow + "-" + mObjHigh + " W", C_OBJT, JR);
+        }
+
+        // barra de potencia con zoom dinamico
+        rrect(dc, 30, 272, 450, 318, 23, C_TRACK, null, 0);
+        if (hasObj) {
+            var zl = mapX(mObjLow);
+            var zr = mapX(mObjHigh);
+            rrect(dc, zl, 262, zr, 328, 8, C_ZONEF, C_GREEN, 3);
+        }
+        var nx = px(mapX(mPower3));
+        dc.setColor(needleColor, C_BG);
+        dc.fillPolygon([[nx, py(266)], [nx - pw(11), py(248)], [nx + pw(11), py(248)]]);
+        dc.setPenWidth(pw(4) > 2 ? pw(4) : 2);
+        dc.drawLine(nx, py(266), nx, py(324));
+        dc.setPenWidth(1);
+
+        // etiquetas de escala: vatios por debajo / por encima del rango objetivo
+        if (hasObj) {
+            txt(dc, 30, 354, Graphics.FONT_XTINY, "-" + (mObjLow - mScaleMin) + " W", C_GREY, JL);
+            txt(dc, 450, 354, Graphics.FONT_XTINY, "+" + (mScaleMax - mObjHigh) + " W", C_GREY, JR);
+        } else {
+            txt(dc, 30, 354, Graphics.FONT_XTINY, mScaleMin.toString(), C_GREY, JL);
+            txt(dc, 450, 354, Graphics.FONT_XTINY, mScaleMax.toString(), C_GREY, JR);
+        }
+        if (hasObj) {
+            txt(dc, mapX(mObjLow), 354, Graphics.FONT_XTINY, mObjLow.toString(), C_GREEN, JC);
+            txt(dc, mapX(mObjHigh), 354, Graphics.FONT_XTINY, mObjHigh.toString(), C_GREEN, JC);
+        }
+
+        drawPager(dc);
+        drawPage(dc, hasObj, JL, JR, JC);
+
+        // ---------- tarjeta del siguiente paso (ultimos 8 s) ----------
+        if (mBanner.length() > 0) {
+            var bc = (mBannerKind == 1) ? C_RED : ((mBannerKind == 2) ? C_BLUE : C_PURP);
+            rrect(dc, 8, 664, 472, 792, 14, 0xFFFFFF, bc, 4);
+            var ttl = "SIGUIENTE";
+            if (mNextKind == 0) { ttl = "ULTIMO ESFUERZO"; }
+            else if (mNextName.length() > 0) { ttl = "SIGUIENTE · " + mNextName.toUpper(); }
+            dc.setClip(px(22), py(672), pw(300), ph(40));
+            txt(dc, 24, 690, Graphics.FONT_XTINY, ttl, 0x0B0E14, JL);
+            dc.clearClip();
+            if (mNextDur > 0) { txt(dc, 456, 690, Graphics.FONT_XTINY, fmtHMS(mNextDur), 0x0B0E14, JR); }
+            var wt = "--";
+            if (mNextKind == 1) { wt = mNextLow + "-" + mNextHigh; }
+            else if (mNextKind == 2) { wt = "LIBRE"; }
+            else { wt = "FIN"; }
+            txt(dc, 24, 748, Graphics.FONT_NUMBER_MILD, wt, 0x0B0E14, JL);
+            if (mNextKind == 1) {
+                var ww = dc.getTextWidthInPixels(wt, Graphics.FONT_NUMBER_MILD) / mSX;
+                txt(dc, 24 + ww + 6, 756, Graphics.FONT_SMALL, "W", C_GREY, JL);
+            }
+            txt(dc, 456, 748, Graphics.FONT_NUMBER_MILD, mNextRem.toString(), bc, JR);
+            var rw = dc.getTextWidthInPixels(mNextRem.toString(), Graphics.FONT_NUMBER_MILD) / mSX;
+            txt(dc, 456 - rw - 8, 756, Graphics.FONT_XTINY, "EN", 0x0B0E14, JR);
+            return;
+        }
+    }
+
+
+    private function drawPager(dc) {
+        var names = ["RIDE", "PASOS", "ANÁLISIS", "CUERPO"];
+        var cols = [C_BLUE, C_ORG, C_PURP, C_HRRED];
+        rrect(dc, 8, 396, 472, 438, 10, C_CARD, cols[mPage], 2);
+        txt(dc, 36, 417, Graphics.FONT_SMALL, "<", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, 444, 417, Graphics.FONT_SMALL, ">", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, 240, 410, Graphics.FONT_XTINY, names[mPage], cols[mPage], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        for (var i = 0; i < 4; i++) {
+            dc.setColor(i == mPage ? cols[mPage] : C_BORD, Graphics.COLOR_TRANSPARENT);
+            dc.fillCircle(px(216 + i * 16), py(430), pw(4) > 2 ? pw(4) : 2);
+        }
+    }
+
+    // casilla de 2 columnas x 3 filas (col 0..1, row 0..2)
+    private function cell(dc, col, row, acc, label, value, unit) {
+        var x0 = (col == 0) ? 8 : 244;
+        var x1 = (col == 0) ? 236 : 472;
+        var y0 = 446 + row * 116;
+        var y1 = y0 + 108;
+        tile(dc, x0, y0, x1, y1, acc, label);
+        var f = fitFont(dc, value, pw(x1 - x0 - 90), [Graphics.FONT_NUMBER_MEDIUM, Graphics.FONT_NUMBER_MILD, Graphics.FONT_SMALL]);
+        txt(dc, x0 + 22, y0 + 64, f, value, C_WHITE, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, x1 - 12, y1 - 20, Graphics.FONT_XTINY, unit, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    private function nn(v, fmt) {
+        if (v == null) { return "--"; }
+        return v.format(fmt);
+    }
+
+    private function stepClock() {
+        var tSec = mTimerSec;
+        if (mFromWorkout && mStepDurType == Activity.WORKOUT_STEP_DURATION_TIME && mStepDurVal > 0) {
+            var total = mStepDurVal;
+            if (total >= 10000) { total = total / 1000; }
+            tSec = total - (mTimerSec - mStepStartSec);
+            if (tSec < 0) { tSec = 0; }
+        } else if (mFromWorkout) {
+            tSec = mTimerSec - mStepStartSec;
+        }
+        return fmtHMS(tSec);
+    }
+
+    private function drawPage(dc, hasObj, JL, JR, JC) {
+        if (mPage == 0) {
+            cell(dc, 0, 0, C_HRRED, "FC", nn(mHr, "%d"), "ppm");
+            cell(dc, 1, 0, C_PURP, mFromWorkout ? "PASO" : "TIEMPO", stepClock(), "");
+            cell(dc, 0, 1, C_BLUE, "VELOC", (mSpeed != null) ? (mSpeed * 3.6f).format("%.1f") : "--", "km/h");
+            cell(dc, 1, 1, C_AMBER, "DIST", (mDist != null) ? (mDist / 1000.0f).format("%.1f") : "--", "km");
+            cell(dc, 0, 2, C_GREEN, "CADENCIA", nn(mCad, "%d"), "rpm");
+            cell(dc, 1, 2, C_ORG, "DESNIVEL", nn(mAsc, "%d"), "m");
+        } else if (mPage == 1) {
+            drawSteps(dc, JL, JR);
+        } else if (mPage == 2) {
+            var y0 = 446;
+            var y1 = 584;
+            rrect(dc, 8, y0, 472, y1, 12, C_CARD, C_BORD, 2);
+            rrect(dc, 8, y0 + 7, 15, y1 - 7, 3, C_BLUE, null, 0);
+            txt(dc, 28, y0 + 14, Graphics.FONT_XTINY, "ÚLTIMOS 40 S", C_GREY, JL);
+            if (hasObj) { txt(dc, 456, y0 + 14, Graphics.FONT_XTINY, "BANDA OBJETIVO", C_GREEN, JR); }
+    var cx0 = 28.0f;
+    var cx1 = 456.0f;
+    var cy0 = y0 + 28.0f;
+    var cy1 = y1 - 6.0f;
+    var span = mScaleMax - mScaleMin;
+    if (span <= 0) { span = 1; }
+
+    if (hasObj) {
+        var fTop = (mObjHigh - mScaleMin).toFloat() / span;
+        var fBot = (mObjLow - mScaleMin).toFloat() / span;
+        if (fTop > 1.0f) { fTop = 1.0f; }
+        if (fBot < 0.0f) { fBot = 0.0f; }
+        var yTop = cy1 - fTop * (cy1 - cy0);
+        var yBot = cy1 - fBot * (cy1 - cy0);
+        dc.setColor(C_ZONEF, C_BG);
+        dc.fillRectangle(px(cx0), py(yTop), pw(cx1 - cx0), py(yBot) - py(yTop));
+    }
+
+    if (mChartN > 1) {
+        var start = (mChartN < 40) ? 0 : mChartIdx;
+        var stepX = (cx1 - cx0) / (mChartN - 1);
+        var prevX = 0.0f;
+        var prevY = 0.0f;
+        for (var k = 0; k < mChartN; k++) {
+            var v = mChart[(start + k) % 40];
+            if (v == null) { v = 0.0f; }
+            var fx = cx0 + k * stepX;
+            var fy = cy1 - (v - mScaleMin) * (cy1 - cy0) / span;
+            if (fy < cy0) { fy = cy0; }
+            if (fy > cy1) { fy = cy1; }
+            if (k > 0) {
+                var segColor = C_WHITE;
+                if (hasObj && (v > mObjHigh || mChart[(start + k - 1) % 40] > mObjHigh)) {
+                    segColor = C_AMBER;
+                }
+                dc.setColor(segColor, C_BG);
+                dc.setPenWidth(pw(3) > 2 ? pw(3) : 2);
+                dc.drawLine(px(prevX), py(prevY), px(fx), py(fy));
+                dc.setPenWidth(1);
+            }
+            prevX = fx;
+            prevY = fy;
+        }
+        dc.setColor(C_WHITE, C_BG);
+        dc.fillCircle(px(prevX), py(prevY), pw(6) > 3 ? pw(6) : 3);
+    }
+
+
+            var ifv = (mHasPower && mFtp > 0 && mNp > 0.0f) ? (mNp / mFtp).format("%.2f") : "--";
+            small(dc, 0, 0, C_BLUE, "IF", ifv, "");
+            small(dc, 1, 0, C_AMBER, "TSS", mHasPower ? mTss.format("%.1f") : "--", "");
+            small(dc, 0, 1, C_PURP, "NP", (mNp > 0.0f) ? mNp.format("%d") : "--", "W");
+            small(dc, 1, 1, C_GREEN, "MEDIA", nn(mAvgPower, "%d"), "W");
+        } else {
+            cell(dc, 0, 0, C_HRRED, "FC", nn(mHr, "%d"), "ppm");
+            cell(dc, 1, 0, C_HRRED, "FC MEDIA", nn(mAvgHr, "%d"), "ppm");
+            cell(dc, 0, 1, C_HRRED, "FC MAX", nn(mMaxHr, "%d"), "ppm");
+            cell(dc, 1, 1, C_AMBER, "CALORÍAS", nn(mCal, "%d"), "kcal");
+            cell(dc, 0, 2, C_BLUE, "POT MEDIA", nn(mAvgPower, "%d"), "W");
+            cell(dc, 1, 2, C_ORG, "POT MAX", nn(mMaxPow, "%d"), "W");
+        }
+    }
+
+    private function small(dc, col, row, acc, label, value, unit) {
+        var x0 = (col == 0) ? 8 : 244;
+        var x1 = (col == 0) ? 236 : 472;
+        var y0 = 592 + row * 100;
+        var y1 = y0 + 92;
+        tile(dc, x0, y0, x1, y1, acc, label);
+        txt(dc, x0 + 22, y0 + 56, Graphics.FONT_NUMBER_MILD, value, C_WHITE, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+        txt(dc, x1 - 12, y1 - 18, Graphics.FONT_XTINY, unit, C_GREY, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    // Panel de pasos: actual, siguiente y los ultimos terminados.
+    // El API solo da el paso actual y el siguiente; los anteriores los guarda el campo.
+    private function drawSteps(dc, JL, JR) {
+        rrect(dc, 8, 446, 472, 536, 12, C_CARD, C_ORG, 3);
+        txt(dc, 24, 466, Graphics.FONT_XTINY, "PASO " + mStepNo + (mStepName.length() > 0 ? " · " + mStepName.toUpper() : ""), C_GREY, JL);
+        txt(dc, 24, 508, Graphics.FONT_NUMBER_MILD, stepClock(), C_WHITE, JL);
+        txt(dc, 456, 508, Graphics.FONT_NUMBER_MILD, hasObjective() ? (mObjLow + "-" + mObjHigh) : "LIBRE", C_OBJT, JR);
+
+        rrect(dc, 8, 544, 472, 612, 12, C_CARD, C_BORD, 2);
+        var nm = "SIGUIENTE";
+        if (mNextKind == 0) { nm = mFromWorkout ? "ÚLTIMO PASO" : "SIN ENTRENAMIENTO"; }
+        txt(dc, 24, 578, Graphics.FONT_XTINY, nm, C_GREY, JL);
+        if (mNextKind != 0) {
+            if (mNextDur > 0) { txt(dc, 200, 578, Graphics.FONT_SMALL, fmtHMS(mNextDur), C_WHITE, JL); }
+            txt(dc, 456, 578, Graphics.FONT_SMALL, (mNextKind == 1) ? (mNextLow + "-" + mNextHigh + " W") : "LIBRE", C_WHITE, JR);
+        }
+
+        txt(dc, 24, 634, Graphics.FONT_XTINY, "TERMINADOS", C_GREY, JL);
+        var shown = (mHN < 3) ? mHN : 3;
+        for (var k = 0; k < shown; k++) {
+            var idx = (mHIdx - 1 - k + 12) % 6;
+            var y0 = 650 + k * 48;
+            var avg = mHAvg[idx];
+            var ok = (mHLow[idx] > 0 && mHHigh[idx] > mHLow[idx]);
+            var col = C_GREY;
+            if (ok) { col = (avg >= mHLow[idx] && avg <= mHHigh[idx]) ? C_GREEN : C_RED; }
+            rrect(dc, 8, y0, 472, y0 + 42, 8, C_CARD, null, 0);
+            rrect(dc, 8, y0 + 4, 15, y0 + 38, 3, col, null, 0);
+            txt(dc, 28, y0 + 21, Graphics.FONT_XTINY, fmtHMS(mHDur[idx]), C_WHITE, JL);
+            txt(dc, 160, y0 + 21, Graphics.FONT_XTINY, ok ? (mHLow[idx] + "-" + mHHigh[idx] + " W") : "LIBRE", C_GREY, JL);
+            txt(dc, 456, y0 + 21, Graphics.FONT_XTINY, avg + " W", col, JR);
+        }
+        if (mHN == 0) { txt(dc, 240, 720, Graphics.FONT_XTINY, "Aún no has terminado ningún paso", C_GREY, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER); }
+    }
+}

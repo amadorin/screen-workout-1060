@@ -1,0 +1,7 @@
+<settings>
+    <group id="objGroup" title="@Strings.GroupTitle">
+        <setting propertyKey="@Properties.ftp" title="@Strings.FtpTitle">
+            <settingConfig type="numeric"/>
+        </setting>
+    </group>
+</settings>
